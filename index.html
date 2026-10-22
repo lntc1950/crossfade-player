@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'">
+<title>A/B Crossfade Player</title>
+<style>
+@font-face{font-family:"Archivo";src:url(fonts/archivo-latin-wdth-normal.woff2) format("woff2");font-weight:100 900;font-stretch:62% 125%;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Archivo";src:url(fonts/archivo-latin-ext-wdth-normal.woff2) format("woff2");font-weight:100 900;font-stretch:62% 125%;unicode-range:U+0100-02AF,U+0304,U+0308,U+0329,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2");font-weight:400}
+@font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-600-normal.woff2) format("woff2");font-weight:600}
+</style>
+<style>
+[hidden]{display:none!important}
+html,body{margin:0}
+/* Layout: Bild oben, darunter ein Pult mit zwei Kanalzügen und dem Crossfader in der Mitte */
+:root{
+  --bg:#eceae6; --panel:#f7f6f3; --line:#d3d0ca; --fg:#1d1c1a; --muted:#6c6862;
+  --a:#c56a12; --b:#1f6f93; --well:#e2dfd9; --screen:#121110;
+  --display:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141312; --panel:#1d1c1a; --line:#34322e; --fg:#ebe8e2; --muted:#9a958c;
+  --a:#f0953a; --b:#4fb3dc; --well:#26241f; --screen:#000; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141312; --panel:#1d1c1a; --line:#34322e; --fg:#ebe8e2; --muted:#9a958c;
+  --a:#f0953a; --b:#4fb3dc; --well:#26241f; --screen:#000; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:15px;line-height:1.45;
+  padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1080px;margin:0 auto;display:grid;gap:16px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:1.35rem;font-weight:800;font-stretch:80%;letter-spacing:.01em;margin:0;text-transform:uppercase}
+h1 span{color:var(--a)} h1 em{font-style:normal;color:var(--b)}
+.keys{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+kbd{font-family:var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel);color:var(--fg)}
+
+.stage{position:relative;background:var(--screen);border-radius:6px;overflow:hidden;aspect-ratio:16/9;max-width:100%}
+.stage video{width:100%;height:100%;display:block;object-fit:contain;background:var(--screen)}
+.drop-video{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#cfcac2;padding:24px;cursor:pointer;border:2px dashed transparent}
+.drop-video.over{border-color:var(--a)}
+.drop-video strong{display:block;font-size:1.1rem;font-stretch:85%;text-transform:uppercase;letter-spacing:.06em;color:#f2eee7}
+.drop-video small{font-family:var(--mono);font-size:.75rem;color:#8f8a82}
+
+.desk{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:stretch}
+@media (max-width:760px){.desk{grid-template-columns:1fr}.fader{order:-1}}
+
+.strip{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:10px;align-content:start;border:1px solid var(--line);border-radius:5px;padding:12px;background:var(--bg);position:relative}
+.strip[data-k="A"]{--c:var(--a)} .strip[data-k="B"]{--c:var(--b)}
+.strip.over{outline:2px dashed var(--c);outline-offset:-2px}
+.strip-head{display:flex;align-items:center;gap:10px}
+.badge{width:34px;height:34px;border-radius:4px;background:var(--c);color:var(--panel);display:grid;place-items:center;font-weight:800;font-size:1.2rem;flex:none}
+.fname{min-width:0;flex:1}
+.fname b{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.fname span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9rem}
+.meter{height:8px;background:var(--well);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--c);transition:width 60ms linear}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.8rem;color:var(--muted)}
+.row output{min-width:7.5ch;text-align:right}
+.row output,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--fg);font-size:.8rem}
+input[type=number]{width:84px;font-family:var(--mono);font-size:.8rem;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--fg)}
+.btn{font:inherit;font-size:.8rem;font-weight:600;padding:7px 10px;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--c, var(--a));outline-offset:2px}
+.btn.go{background:var(--c);border-color:var(--c);color:var(--panel)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.warn{font-size:.75rem;color:var(--c)}
+
+.fader{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;gap:14px;align-content:center;padding:4px 4px}
+.xf-labels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums}
+.xf-labels .la{color:var(--a)} .xf-labels .lb{color:var(--b)}
+.xf{position:relative;height:56px}
+.xf-track{position:absolute;left:0;right:0;top:50%;height:10px;transform:translateY(-50%);border-radius:5px;
+  background:linear-gradient(90deg,var(--a),var(--well) 50%,var(--b))}
+.xf-ticks{position:absolute;left:0;right:0;top:calc(50% + 12px);display:flex;justify-content:space-between;padding:0 2px}
+.xf-ticks i{width:1px;height:6px;background:var(--muted)} .xf-ticks i:nth-child(3){height:10px}
+#xf{position:absolute;inset:0;width:100%;height:100%;margin:0;background:transparent;-webkit-appearance:none;appearance:none;cursor:ew-resize}
+#xf::-webkit-slider-runnable-track{height:56px;background:transparent}
+#xf::-moz-range-track{height:56px;background:transparent}
+#xf::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:48px;margin-top:4px;border-radius:4px;background:var(--fg);border:3px solid var(--panel);box-shadow:0 0 0 1px var(--line);
+  background-image:linear-gradient(var(--panel),var(--panel));background-size:3px 60%;background-position:center;background-repeat:no-repeat}
+#xf::-moz-range-thumb{width:24px;height:42px;border-radius:4px;background:var(--fg);border:3px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+#xf:focus-visible{outline:2px solid var(--fg);outline-offset:4px;border-radius:6px}
+.fade-btns{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center}
+.fade-btns .A{--c:var(--a)} .fade-btns .B{--c:var(--b)}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{font:inherit;font-family:var(--mono);font-size:.75rem;padding:6px 8px;border:0;background:var(--panel);color:var(--muted);cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--panel)}
+.opts{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.8rem;color:var(--muted);align-items:center}
+.opts label{display:flex;gap:6px;align-items:center}
+select{font:inherit;font-size:.8rem;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--fg)}
+.status{font-family:var(--mono);font-size:.75rem;color:var(--muted);text-align:center;min-height:1.2em}
+.hidden-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+@media (prefers-reduced-motion:reduce){.meter i{transition:none}}
+</style>
+
+</head><body>
+<div class="wrap">
+  <header>
+    <h1>Crossfade <span>A</span>/<em>B</em></h1>
+    <div class="keys"><span><kbd>Leertaste</kbd> Play/Pause</span><span><kbd>A</kbd> / <kbd>B</kbd> Fade</span><span><kbd>X</kbd> Hin und her</span><span><kbd>←</kbd><kbd>→</kbd> Fader</span></div>
+  </header>
+
+  <div class="stage" id="stage">
+    <video id="vid" playsinline controls muted hidden></video>
+    <label class="drop-video" id="dropVideo" for="fileV">
+      <div><strong>Video hierher ziehen</strong><small>oder klicken · MP4 / MOV / WebM · der Originalton bleibt stumm</small></div>
+    </label>
+    <input class="hidden-input" type="file" id="fileV" accept="video/*">
+  </div>
+
+  <section class="desk">
+    <div class="strip" data-k="A" id="stripA">
+      <div class="strip-head"><div class="badge">A</div>
+        <div class="fname"><b>Tonspur A</b><span id="nameA">keine Datei</span></div></div>
+      <div class="meter"><i id="mA"></i></div>
+      <div class="row">Pegel <output id="gA">0.0 dB</output></div>
+      <div class="row"><label for="offA">Versatz (ms)</label><input type="number" id="offA" value="0" step="10"></div>
+      <label class="btn" for="fileA">Datei laden…</label>
+      <input class="hidden-input" type="file" id="fileA" accept="audio/*,video/*">
+      <div class="warn" id="wA"></div>
+    </div>
+
+    <div class="fader">
+      <div class="xf-labels"><span class="la" id="pctA">A 100%</span><span class="mono" id="tc">00:00:00.00</span><span class="lb" id="pctB">B 0%</span></div>
+      <div class="xf">
+        <div class="xf-track"></div>
+        <div class="xf-ticks"><i></i><i></i><i></i><i></i><i></i></div>
+        <input type="range" id="xf" min="0" max="1000" value="0" aria-label="Crossfader zwischen Tonspur A und B">
+      </div>
+      <div class="fade-btns">
+        <button class="btn go A" id="toA">◀ zu A</button>
+        <div class="seg" role="group" aria-label="Fade-Dauer" id="durs">
+          <button data-d="0">Cut</button><button data-d="0.5">0.5s</button><button data-d="2" aria-pressed="true">2s</button><button data-d="5">5s</button>
+        </div>
+        <button class="btn go B" id="toB">zu B ▶</button>
+      </div>
+      <div class="opts">
+        <label for="curve">Kurve
+          <select id="curve"><option value="power">Equal Power (−3 dB Mitte)</option><option value="linear">Linear (−6 dB Mitte)</option></select>
+        </label>
+        <label for="orig">Originalton <input type="range" id="orig" min="0" max="100" value="0" style="width:90px"></label>
+      </div>
+      <div class="status" id="status">Lade ein Video und zwei Tonspuren.</div>
+    </div>
+
+    <div class="strip" data-k="B" id="stripB">
+      <div class="strip-head"><div class="badge">B</div>
+        <div class="fname"><b>Tonspur B</b><span id="nameB">keine Datei</span></div></div>
+      <div class="meter"><i id="mB"></i></div>
+      <div class="row">Pegel <output id="gB">−∞ dB</output></div>
+      <div class="row"><label for="offB">Versatz (ms)</label><input type="number" id="offB" value="0" step="10"></div>
+      <label class="btn" for="fileB">Datei laden…</label>
+      <input class="hidden-input" type="file" id="fileB" accept="audio/*,video/*">
+      <div class="warn" id="wB"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const vid = $('vid');
+  let ctx = null, master = null;
+  const T = { A:{buf:null,gain:null,an:null,src:null,name:''}, B:{buf:null,gain:null,an:null,src:null,name:''} };
+  let x = 0;              // 0 = A, 1 = B
+  let fadeDur = 2, fadeAnim = null;
+  let anchor = null;      // {ctx, vid}
+  const status = m => $('status').textContent = m;
+
+  function getCtx(){
+    if (ctx) return ctx;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.connect(ctx.destination);
+    for (const k of ['A','B']){
+      const t = T[k];
+      t.gain = ctx.createGain();
+      t.an = ctx.createAnalyser(); t.an.fftSize = 1024;
+      t.gain.connect(t.an); t.an.connect(master);
+    }
+    applyGains(true);
+    return ctx;
+  }
+
+  // ---- Crossfade-Kurve
+  function gainsFor(v){
+    if ($('curve').value === 'linear') return [1 - v, v];
+    return [Math.cos(v * Math.PI / 2), Math.sin(v * Math.PI / 2)];
+  }
+  const dB = g => g < 0.0001 ? '−∞ dB' : (20*Math.log10(g)).toFixed(1).replace('-','−') + ' dB';
+  function applyGains(instant){
+    const [ga, gb] = gainsFor(x);
+    $('gA').textContent = dB(ga); $('gB').textContent = dB(gb);
+    $('pctA').textContent = 'A ' + Math.round((1-x)*100) + '%';
+    $('pctB').textContent = 'B ' + Math.round(x*100) + '%';
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const [k,g] of [['A',ga],['B',gb]]){
+      const p = T[k].gain.gain;
+      p.cancelScheduledValues(now);
+      if (instant) p.setValueAtTime(g, now); else p.setTargetAtTime(g, now, 0.012);
+    }
+  }
+  function setX(v, fromUser){
+    x = Math.min(1, Math.max(0, v));
+    $('xf').value = Math.round(x*1000);
+    if (fromUser && fadeAnim){ cancelAnimationFrame(fadeAnim); fadeAnim = null; }
+    applyGains(false);
+  }
+  function fadeTo(target){
+    if (fadeAnim){ cancelAnimationFrame(fadeAnim); fadeAnim = null; }
+    const from = x, dur = fadeDur * Math.abs(target - from);
+    if (dur <= 0){ setX(target); return; }
+    const t0 = performance.now();
+    const step = now => {
+      const p = Math.min(1, (now - t0) / (dur*1000));
+      setX(from + (target - from) * p);
+      fadeAnim = p < 1 ? requestAnimationFrame(step) : null;
+    };
+    fadeAnim = requestAnimationFrame(step);
+  }
+
+  // ---- Wiedergabe: Video ist die Uhr, beide Spuren starten sample-genau gemeinsam
+  function stopSources(when){
+    for (const k of ['A','B']){ const s = T[k].src; if (s){ try{ s.stop(when); }catch(e){} T[k].src = null; } }
+  }
+  function startSources(vt){
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const hadSources = T.A.src || T.B.src;
+    const lead = hadSources ? 0.03 : 0.0;
+    const when = now + lead;
+    if (hadSources){
+      master.gain.cancelScheduledValues(now);
+      master.gain.setValueAtTime(master.gain.value, now);
+      master.gain.linearRampToValueAtTime(0, when);
+      stopSources(when);
+    }
+    const rate = vid.playbackRate || 1;
+    for (const k of ['A','B']){
+      const t = T[k]; if (!t.buf) continue;
+      const s = ctx.createBufferSource(); s.buffer = t.buf; s.playbackRate.value = rate; s.connect(t.gain);
+      const off = vt + lead*rate + (parseFloat($('off'+k).value)||0)/1000;
+      if (off < 0) s.start(when + (-off)/rate, 0);
+      else if (off < t.buf.duration) s.start(when, off);
+      else continue;
+      t.src = s;
+    }
+    if (hadSources){ master.gain.linearRampToValueAtTime(1, when + 0.02); }
+    else { master.gain.cancelScheduledValues(now); master.gain.setValueAtTime(1, now); }
+    anchor = { ctx: when, vid: vt + lead*rate };
+  }
+  function halt(){
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(0, now + 0.015);
+    stopSources(now + 0.02);
+    anchor = null;
+  }
+
+  vid.addEventListener('play', async () => { getCtx(); await ctx.resume(); startSources(vid.currentTime); });
+  vid.addEventListener('pause', halt);
+  vid.addEventListener('seeking', () => { if (!vid.paused) halt(); });
+  vid.addEventListener('seeked', () => { if (!vid.paused) startSources(vid.currentTime); });
+  vid.addEventListener('ratechange', () => { if (!vid.paused) startSources(vid.currentTime); });
+  vid.addEventListener('ended', halt);
+
+  // Drift-Korrektur + Meter + Timecode
+  const tmp = new Float32Array(1024);
+  const fmt = s => { s = Math.max(0,s); const h=Math.floor(s/3600), m=Math.floor(s/60)%60, ss=Math.floor(s)%60, cs=Math.floor((s%1)*100);
+    return [h,m,ss].map(n=>String(n).padStart(2,'0')).join(':') + '.' + String(cs).padStart(2,'0'); };
+  let lastResync = 0;
+  function tick(){
+    $('tc').textContent = fmt(vid.currentTime || 0);
+    if (ctx && anchor && !vid.paused && !vid.seeking){
+      const expected = anchor.vid + (ctx.currentTime - anchor.ctx) * (vid.playbackRate||1);
+      const drift = vid.currentTime - expected;
+      if (Math.abs(drift) > 0.12 && performance.now() - lastResync > 1000 && ctx.currentTime > anchor.ctx){
+        lastResync = performance.now(); startSources(vid.currentTime);
+      }
+    }
+    for (const k of ['A','B']){
+      let pk = 0;
+      if (ctx && T[k].an){ T[k].an.getFloatTimeDomainData(tmp); for (let i=0;i<tmp.length;i++){ const a=Math.abs(tmp[i]); if(a>pk) pk=a; } }
+      const db = pk > 0 ? 20*Math.log10(pk) : -60;
+      $('m'+k).style.width = Math.max(0, Math.min(100, (db+60)/60*100)) + '%';
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // ---- Dateien laden
+  function checkLengths(){
+    for (const k of ['A','B']){
+      const t = T[k], w = $('w'+k);
+      w.textContent = '';
+      if (t.buf && vid.duration && isFinite(vid.duration)){
+        const d = t.buf.duration - vid.duration;
+        if (Math.abs(d) > 0.5) w.textContent = `Länge weicht um ${d>0?'+':''}${d.toFixed(2)} s vom Video ab`;
+      }
+    }
+  }
+  function updateStatus(){
+    const have = [vid.src ? 'Video' : null, T.A.buf ? 'A' : null, T.B.buf ? 'B' : null].filter(Boolean);
+    if (have.length === 3) status('Bereit. Video starten und faden.');
+    else status('Geladen: ' + (have.join(', ') || 'nichts') + ' · es fehlt: ' + ['Video','A','B'].filter(n=>!have.includes(n)).join(', '));
+  }
+  function loadVideo(file){
+    if (!file) return;
+    if (vid.src) URL.revokeObjectURL(vid.src);
+    vid.src = URL.createObjectURL(file);
+    vid.hidden = false; $('dropVideo').hidden = true;
+    vid.addEventListener('loadedmetadata', () => { checkLengths(); }, { once:true });
+    getCtx();
+    updateStatus();
+  }
+  async function loadAudio(k, file){
+    if (!file) return;
+    getCtx();
+    $('name'+k).textContent = 'dekodiere…';
+    try{
+      const ab = await file.arrayBuffer();
+      const buf = await new Promise((res, rej) => { const p = ctx.decodeAudioData(ab, res, rej); if (p && p.catch) p.catch(rej); });
+      T[k].buf = buf; T[k].name = file.name;
+      $('name'+k).textContent = file.name;
+      $('name'+k).title = `${file.name} · ${buf.numberOfChannels} ch · ${buf.sampleRate} Hz · ${buf.duration.toFixed(2)} s`;
+      checkLengths(); updateStatus();
+      if (!vid.paused) startSources(vid.currentTime);
+    }catch(e){
+      $('name'+k).textContent = 'keine Datei';
+      $('w'+k).textContent = 'Datei konnte nicht gelesen werden. WAV, MP3, AAC oder FLAC verwenden.';
+    }
+  }
+  $('fileV').addEventListener('change', e => loadVideo(e.target.files[0]));
+  $('fileA').addEventListener('change', e => loadAudio('A', e.target.files[0]));
+  $('fileB').addEventListener('change', e => loadAudio('B', e.target.files[0]));
+
+  function dropzone(el, onFile){
+    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('over'));
+    el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) onFile(f); });
+  }
+  dropzone($('stage'), f => f.type.startsWith('audio') ? loadAudio(T.A.buf ? 'B' : 'A', f) : loadVideo(f));
+  dropzone($('stripA'), f => loadAudio('A', f));
+  dropzone($('stripB'), f => loadAudio('B', f));
+
+  // Dateien, die daneben fallen, sollen nicht das Fenster ersetzen
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+
+  // ---- Bedienung
+  $('xf').addEventListener('input', e => setX(e.target.value/1000, true));
+  $('toA').addEventListener('click', () => fadeTo(0));
+  $('toB').addEventListener('click', () => fadeTo(1));
+  $('curve').addEventListener('change', () => applyGains(false));
+  $('orig').addEventListener('input', e => { const v = e.target.value/100; vid.volume = v; vid.muted = v === 0; });
+  vid.addEventListener('volumechange', () => { $('orig').value = vid.muted ? 0 : Math.round(vid.volume*100); });
+  for (const k of ['A','B']) $('off'+k).addEventListener('change', () => { if (!vid.paused) startSources(vid.currentTime); });
+  $('durs').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    fadeDur = parseFloat(b.dataset.d);
+    for (const o of $('durs').children) o.setAttribute('aria-pressed', String(o === b));
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.target.matches('input[type=number], select')) return;
+    const key = e.key.toLowerCase();
+    if (key === ' ' && e.target !== vid){ e.preventDefault(); if (vid.src) vid.paused ? vid.play() : vid.pause(); }
+    else if (key === 'a'){ fadeTo(0); }
+    else if (key === 'b'){ fadeTo(1); }
+    else if (key === 'x'){ fadeTo(x < 0.5 ? 1 : 0); }
+    else if ((key === 'arrowleft' || key === 'arrowright') && e.target !== vid && e.target.id !== 'xf'){
+      e.preventDefault(); setX(x + (key === 'arrowright' ? 0.05 : -0.05), true);
+    }
+  });
+  applyGains(true);
+})();
+</script>
+
+</body></html>
